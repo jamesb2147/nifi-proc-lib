@@ -11,3 +11,14 @@ jobs:
           node-version: '20'
       - run: npm install -g bats
       - run: bats -v
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - run: mvnw archetype:generate   -DarchetypeGroupId=org.apache.nifi   -DarchetypeArtifactId=nifi-processor-bundle-archetype   -DarchetypeVersion=2.3.0   -DnifiVersion=2.4.0   -DgroupId=org.example   -DartifactId=nifi-journald-bundle
+      - run: mvn --batch-mode --update-snapshots verify
+      - run: mkdir staging && cp target/*.jar staging
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Package
+          path: staging
