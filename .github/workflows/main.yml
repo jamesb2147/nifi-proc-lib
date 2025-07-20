@@ -1,24 +1,262 @@
-name: learn-github-actions
-run-name: ${{ github.actor }} is learning GitHub Actions
-on: [push]
+name: Build and Release NiFi Journald Processor
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ created ]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: '1.0'
+        required: false
+        type: string
+
+env:
+  MAVEN_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=3
+
 jobs:
-  check-bats-version:
+  test:
     runs-on: ubuntu-latest
+    name: Test Build
+    
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm install -g bats
-      - run: bats -v
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-      - run: mvnw archetype:generate   -DarchetypeGroupId=org.apache.nifi   -DarchetypeArtifactId=nifi-processor-bundle-archetype   -DarchetypeVersion=2.3.0   -DnifiVersion=2.4.0   -DgroupId=org.example   -DartifactId=nifi-journald-bundle
-      - run: mvn --batch-mode --update-snapshots verify
-      - run: mkdir staging && cp target/*.jar staging
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Package
-          path: staging
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Run tests
+      run: mvn clean test
+      
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: |
+          **/target/surefire-reports/
+          **/target/failsafe-reports/
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    name: Build NAR Package
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Extract version from pom.xml
+      id: extract_version
+      run: |
+        VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Project version: $VERSION"
+        
+    - name: Build NAR package
+      run: mvn clean package -DskipTests
+      
+    - name: Find NAR file
+      id: find_nar
+      run: |
+        NAR_FILE=$(find . -name "*.nar" -type f | head -1)
+        echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
+        echo "NAR file found: $NAR_FILE"
+        ls -la $NAR_FILE
+        
+    - name: Upload NAR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: nifi-journald-processor-${{ steps.extract_version.outputs.version }}
+        path: ${{ steps.find_nar.outputs.nar_file }}
+        retention-days: 30
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ steps.extract_version.outputs.version }}
+        path: |
+          **/target/*.jar
+          **/target/*.nar
+        retention-days: 7
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Security Scan
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Run dependency check
+      run: |
+        mvn org.owasp:dependency-check-maven:check \
+          -DfailBuildOnCVSS=8 \
+          -DskipTestScope=true
+      continue-on-error: true
+      
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-scan-results
+        path: |
+          **/target/dependency-check-report.html
+          **/target/dependency-check-report.xml
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [test, build, security-scan]
+    name: Create Release
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+        
+    - name: Determine release version
+      id: release_version
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.release_version }}" ]; then
+          VERSION="${{ github.event.inputs.release_version }}"
+        elif [ "${{ github.event_name }}" == "release" ]; then
+          VERSION="${{ github.event.release.tag_name }}"
+          # Remove 'v' prefix if present
+          VERSION=${VERSION#v}
+        else
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Release version: $VERSION"
+        
+    - name: Update version in pom.xml
+      run: |
+        mvn versions:set -DnewVersion=${{ steps.release_version.outputs.version }}
+        mvn versions:commit
+        
+    - name: Build release package
+      run: mvn clean package -DskipTests
+      
+    - name: Find release NAR file
+      id: find_release_nar
+      run: |
+        NAR_FILE=$(find . -name "*.nar" -type f | head -1)
+        NAR_NAME=$(basename "$NAR_FILE")
+        echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
+        echo "nar_name=$NAR_NAME" >> $GITHUB_OUTPUT
+        echo "Release NAR: $NAR_FILE"
+        
+    - name: Generate checksums
+      run: |
+        cd $(dirname ${{ steps.find_release_nar.outputs.nar_file }})
+        sha256sum ${{ steps.find_release_nar.outputs.nar_name }} > ${{ steps.find_release_nar.outputs.nar_name }}.sha256
+        md5sum ${{ steps.find_release_nar.outputs.nar_name }} > ${{ steps.find_release_nar.outputs.nar_name }}.md5
+        
+    - name: Create release notes
+      id: release_notes
+      run: |
+        cat > RELEASE_NOTES.md << EOF
+        # NiFi Journald Processor v${{ steps.release_version.outputs.version }}
+        
+        ## Description
+        A custom Apache NiFi processor for reading logs from systemd journal (journald) on Linux systems.
+        
+        ## Features
+        - Read logs from specific systemd units or all units
+        - Filter by log priority level (Emergency to Debug)
+        - Configurable poll interval and batch size
+        - Output in JSON or plain text format
+        - Timestamp filtering to avoid duplicate entries
+        - Proper cleanup and shutdown handling
+        
+        ## Installation
+        1. Download the NAR file from this release
+        2. Copy it to your NiFi's \`lib\` directory
+        3. Restart NiFi
+        4. The processor will appear as "JournaldLogReader" in the processor list
+        
+        ## Requirements
+        - Apache NiFi 1.18+ or 2.x
+        - Linux system with systemd/journald
+        - Java 8 or newer
+        - Appropriate permissions to run \`journalctl\`
+        
+        ## Configuration
+        - **Journal Unit**: Specify systemd unit(s) to monitor (use '*' for all)
+        - **Priority Level**: Minimum log priority to capture
+        - **Poll Interval**: Frequency of log polling (seconds)
+        - **Batch Size**: Maximum log entries per FlowFile
+        - **Output Format**: JSON or Plain Text
+        - **Use Timestamp Filtering**: Enable/disable duplicate prevention
+        
+        ## Files in this release
+        - \`${{ steps.find_release_nar.outputs.nar_name }}\`: The NiFi processor NAR file
+        - \`${{ steps.find_release_nar.outputs.nar_name }}.sha256\`: SHA256 checksum
+        - \`${{ steps.find_release_nar.outputs.nar_name }}.md5\`: MD5 checksum
+        
+        Built from commit: ${{ github.sha }}
+        EOF
+        
+    - name: Create/Update Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.release_version.outputs.version }}
+        name: NiFi Journald Processor v${{ steps.release_version.outputs.version }}
+        body_path: RELEASE_NOTES.md
+        draft: false
+        prerelease: false
+        files: |
+          ${{ steps.find_release_nar.outputs.nar_file }}
+          ${{ steps.find_release_nar.outputs.nar_file }}.sha256
+          ${{ steps.find_release_nar.outputs.nar_file }}.md5
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [test, build, security-scan]
+    name: Notify Build Status
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: needs.test.result == 'success' && needs.build.result == 'success'
+      run: |
+        echo "✅ Build completed successfully!"
+        echo "NAR package is ready for deployment."
+        
+    - name: Notify on failure
+      if: needs.test.result == 'failure' || needs.build.result == 'failure'
+      run: |
+        echo "❌ Build failed!"
+        echo "Check the logs for details."
+        exit 1
