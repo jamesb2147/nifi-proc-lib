@@ -17,18 +17,27 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.apache.nifi</groupId>
-        <artifactId>nifi-extension-bundles</artifactId>
-        <version>2.3.0</version>
+        <groupId>org.example</groupId>
+        <artifactId>nifi-journald-bundle</artifactId>
+        <version>1.0.0</version>
     </parent>
 
-    <groupId>com.embaucha</groupId>
-    <artifactId>nifi-journald-bundle</artifactId>
+    <artifactId>nifi-NiFiJournaldProcessor-nar</artifactId>
     <version>1.0.0</version>
-    <packaging>pom</packaging>
+    <packaging>nar</packaging>
 
-    <modules>
-        <module>NiFiJournaldProcessor-processors</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.example</groupId>
+            <artifactId>nifi-NiFiJournaldProcessor-processors</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.nifi</groupId>
+            <artifactId>nifi-standard-services-api-nar</artifactId>
+            <version>2.3.0</version>
+            <type>nar</type>
+        </dependency>
+    </dependencies>
 
 </project>
