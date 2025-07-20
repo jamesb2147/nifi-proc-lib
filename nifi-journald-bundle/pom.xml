@@ -25,7 +25,7 @@
     <groupId>com.embaucha</groupId>
     <artifactId>nifi-journald-bundle</artifactId>
     <version>1.0.0</version>
-    <packaging>pom</packaging>
+    <packaging>nar</packaging>
 
     <modules>
         <module>NiFiJournaldProcessor-processors</module>
