@@ -77,7 +77,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    # needs: test
+    needs: test
     name: Build NAR Package
     
     steps:
@@ -128,17 +128,51 @@ jobs:
     - name: Find NAR file
       id: find_nar
       run: |
+        echo "Searching for NAR files in ${{ steps.find_maven.outputs.maven_dir }}"
+        find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f -ls
+        
         NAR_FILE=$(find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f | head -1)
+        
+        if [ -z "$NAR_FILE" ]; then
+          echo "ERROR: No NAR file found!"
+          echo "Checking target directories..."
+          find ${{ steps.find_maven.outputs.maven_dir }} -name "target" -type d -exec ls -la {} \;
+          exit 1
+        fi
+        
         echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
         echo "NAR file found: $NAR_FILE"
-        ls -la $NAR_FILE
+        ls -la "$NAR_FILE"
+        
+        # Verify the file exists and is readable
+        if [ ! -f "$NAR_FILE" ]; then
+          echo "ERROR: NAR file does not exist: $NAR_FILE"
+          exit 1
+        fi
+        
+        if [ ! -r "$NAR_FILE" ]; then
+          echo "ERROR: NAR file is not readable: $NAR_FILE"
+          exit 1
+        fi
+        
+        echo "NAR file validation successful"
         
     - name: Upload NAR artifact
       uses: actions/upload-artifact@v4
+      if: steps.find_nar.outputs.nar_file != ''
       with:
         name: nifi-journald-processor-${{ steps.extract_version.outputs.version }}
         path: ${{ steps.find_nar.outputs.nar_file }}
         retention-days: 30
+        
+    - name: Upload build artifacts (fallback)
+      uses: actions/upload-artifact@v4
+      if: steps.find_nar.outputs.nar_file == ''
+      with:
+        name: build-debug-${{ steps.extract_version.outputs.version }}
+        path: |
+          ${{ steps.find_maven.outputs.maven_dir }}/**/target/
+        retention-days: 7
         
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
@@ -202,7 +236,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [build, security-scan]
+    needs: [test, build, security-scan]
     name: Create Release
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     
@@ -264,11 +298,30 @@ jobs:
     - name: Find release NAR file
       id: find_release_nar
       run: |
+        echo "Searching for NAR files in ${{ steps.find_maven.outputs.maven_dir }}"
+        find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f -ls
+        
         NAR_FILE=$(find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f | head -1)
+        
+        if [ -z "$NAR_FILE" ]; then
+          echo "ERROR: No NAR file found for release!"
+          echo "Checking target directories..."
+          find ${{ steps.find_maven.outputs.maven_dir }} -name "target" -type d -exec ls -la {} \;
+          exit 1
+        fi
+        
         NAR_NAME=$(basename "$NAR_FILE")
         echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
         echo "nar_name=$NAR_NAME" >> $GITHUB_OUTPUT
         echo "Release NAR: $NAR_FILE"
+        
+        # Verify the file exists
+        if [ ! -f "$NAR_FILE" ]; then
+          echo "ERROR: NAR file does not exist: $NAR_FILE"
+          exit 1
+        fi
+        
+        ls -la "$NAR_FILE"
         
     - name: Generate checksums
       run: |
@@ -337,7 +390,7 @@ jobs:
 
   notify:
     runs-on: ubuntu-latest
-    needs: [build, security-scan]
+    needs: [test, build, security-scan]
     name: Notify Build Status
     if: always()
     
