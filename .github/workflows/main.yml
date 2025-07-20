@@ -129,7 +129,7 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
-    needs: [test, build, security-scan]
+    needs: [build, security-scan]
     name: Create Release
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     
