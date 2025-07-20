@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: '1.0'
+        description: 'Version to release (e.g., 1.0.0)'
         required: false
         type: string
 
@@ -18,32 +18,62 @@ env:
   MAVEN_OPTS: -Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandler.class=standard -Dmaven.wagon.http.retryHandler.count=3
 
 jobs:
-  # test:
-  #   runs-on: ubuntu-latest
-  #   name: Test Build
+  test:
+    runs-on: ubuntu-latest
+    name: Test Build
     
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
       
-  #   - name: Set up JDK 11
-  #     uses: actions/setup-java@v4
-  #     with:
-  #       java-version: '11'
-  #       distribution: 'temurin'
-  #       cache: maven
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
         
-  #   - name: Run tests
-  #     run: mvn clean test
+    - name: Find Maven project directory
+      id: find_maven
+      run: |
+        # Look for pom.xml in common locations
+        if [ -f "pom.xml" ]; then
+          echo "maven_dir=." >> $GITHUB_OUTPUT
+          echo "Found pom.xml in root directory"
+        elif [ -f "nifi-journald-bundle/pom.xml" ]; then
+          echo "maven_dir=nifi-journald-bundle" >> $GITHUB_OUTPUT
+          echo "Found pom.xml in nifi-journald-bundle directory"
+        else
+          # Search for any pom.xml file
+          POM_DIR=$(find . -name "pom.xml" -type f | head -1 | xargs dirname)
+          if [ -n "$POM_DIR" ]; then
+            echo "maven_dir=$POM_DIR" >> $GITHUB_OUTPUT
+            echo "Found pom.xml in $POM_DIR directory"
+          else
+            echo "No pom.xml found!"
+            exit 1
+          fi
+        fi
+        
+    - name: List project structure
+      run: |
+        echo "Project structure:"
+        find . -name "pom.xml" -type f
+        echo "Maven directory: ${{ steps.find_maven.outputs.maven_dir }}"
+        ls -la ${{ steps.find_maven.outputs.maven_dir }}
+        
+    - name: Run tests
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
+      run: mvn clean test
       
-  #   - name: Upload test results
-  #     uses: actions/upload-artifact@v4
-  #     if: always()
-  #     with:
-  #       name: test-results
-  #       path: |
-  #         **/target/surefire-reports/
-  #         **/target/failsafe-reports/
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: |
+          **/target/surefire-reports/
+          **/target/failsafe-reports/
 
   build:
     runs-on: ubuntu-latest
@@ -61,20 +91,44 @@ jobs:
         distribution: 'temurin'
         cache: maven
         
+    - name: Find Maven project directory
+      id: find_maven
+      run: |
+        # Look for pom.xml in common locations
+        if [ -f "pom.xml" ]; then
+          echo "maven_dir=." >> $GITHUB_OUTPUT
+          echo "Found pom.xml in root directory"
+        elif [ -f "nifi-journald-bundle/pom.xml" ]; then
+          echo "maven_dir=nifi-journald-bundle" >> $GITHUB_OUTPUT
+          echo "Found pom.xml in nifi-journald-bundle directory"
+        else
+          # Search for any pom.xml file
+          POM_DIR=$(find . -name "pom.xml" -type f | head -1 | xargs dirname)
+          if [ -n "$POM_DIR" ]; then
+            echo "maven_dir=$POM_DIR" >> $GITHUB_OUTPUT
+            echo "Found pom.xml in $POM_DIR directory"
+          else
+            echo "No pom.xml found!"
+            exit 1
+          fi
+        fi
+        
     - name: Extract version from pom.xml
       id: extract_version
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: |
         VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Project version: $VERSION"
         
     - name: Build NAR package
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: mvn clean package -DskipTests
       
     - name: Find NAR file
       id: find_nar
       run: |
-        NAR_FILE=$(find . -name "*.nar" -type f | head -1)
+        NAR_FILE=$(find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f | head -1)
         echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
         echo "NAR file found: $NAR_FILE"
         ls -la $NAR_FILE
@@ -91,8 +145,8 @@ jobs:
       with:
         name: build-artifacts-${{ steps.extract_version.outputs.version }}
         path: |
-          **/target/*.jar
-          **/target/*.nar
+          ${{ steps.find_maven.outputs.maven_dir }}/**/target/*.jar
+          ${{ steps.find_maven.outputs.maven_dir }}/**/target/*.nar
         retention-days: 7
 
   security-scan:
@@ -111,7 +165,26 @@ jobs:
         distribution: 'temurin'
         cache: maven
         
+    - name: Find Maven project directory
+      id: find_maven
+      run: |
+        # Look for pom.xml in common locations
+        if [ -f "pom.xml" ]; then
+          echo "maven_dir=." >> $GITHUB_OUTPUT
+        elif [ -f "nifi-journald-bundle/pom.xml" ]; then
+          echo "maven_dir=nifi-journald-bundle" >> $GITHUB_OUTPUT
+        else
+          # Search for any pom.xml file
+          POM_DIR=$(find . -name "pom.xml" -type f | head -1 | xargs dirname)
+          if [ -n "$POM_DIR" ]; then
+            echo "maven_dir=$POM_DIR" >> $GITHUB_OUTPUT
+          else
+            echo "maven_dir=." >> $GITHUB_OUTPUT
+          fi
+        fi
+        
     - name: Run dependency check
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: |
         mvn org.owasp:dependency-check-maven:check \
           -DfailBuildOnCVSS=8 \
@@ -124,8 +197,8 @@ jobs:
       with:
         name: security-scan-results
         path: |
-          **/target/dependency-check-report.html
-          **/target/dependency-check-report.xml
+          ${{ steps.find_maven.outputs.maven_dir }}/**/target/dependency-check-report.html
+          ${{ steps.find_maven.outputs.maven_dir }}/**/target/dependency-check-report.xml
 
   release:
     runs-on: ubuntu-latest
@@ -144,8 +217,27 @@ jobs:
         distribution: 'temurin'
         cache: maven
         
+    - name: Find Maven project directory
+      id: find_maven
+      run: |
+        # Look for pom.xml in common locations
+        if [ -f "pom.xml" ]; then
+          echo "maven_dir=." >> $GITHUB_OUTPUT
+        elif [ -f "nifi-journald-bundle/pom.xml" ]; then
+          echo "maven_dir=nifi-journald-bundle" >> $GITHUB_OUTPUT
+        else
+          # Search for any pom.xml file
+          POM_DIR=$(find . -name "pom.xml" -type f | head -1 | xargs dirname)
+          if [ -n "$POM_DIR" ]; then
+            echo "maven_dir=$POM_DIR" >> $GITHUB_OUTPUT
+          else
+            echo "maven_dir=." >> $GITHUB_OUTPUT
+          fi
+        fi
+        
     - name: Determine release version
       id: release_version
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: |
         if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.release_version }}" ]; then
           VERSION="${{ github.event.inputs.release_version }}"
@@ -160,17 +252,19 @@ jobs:
         echo "Release version: $VERSION"
         
     - name: Update version in pom.xml
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: |
         mvn versions:set -DnewVersion=${{ steps.release_version.outputs.version }}
         mvn versions:commit
         
     - name: Build release package
+      working-directory: ${{ steps.find_maven.outputs.maven_dir }}
       run: mvn clean package -DskipTests
       
     - name: Find release NAR file
       id: find_release_nar
       run: |
-        NAR_FILE=$(find . -name "*.nar" -type f | head -1)
+        NAR_FILE=$(find ${{ steps.find_maven.outputs.maven_dir }} -name "*.nar" -type f | head -1)
         NAR_NAME=$(basename "$NAR_FILE")
         echo "nar_file=$NAR_FILE" >> $GITHUB_OUTPUT
         echo "nar_name=$NAR_NAME" >> $GITHUB_OUTPUT
