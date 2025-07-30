@@ -29,7 +29,7 @@
     <dependencies>
         <dependency>
             <groupId>com.embaucha</groupId>
-            <artifactId>nifi-NiFiJournaldProcessor-processors</artifactId>
+            <artifactId>NiFiJournaldProcessor-processors</artifactId>
             <version>1.0.0</version>
         </dependency>
         <dependency>
