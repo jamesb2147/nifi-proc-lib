@@ -1,1 +1,1 @@
-com.embaucha.JournaldLogReader
+com.embaucha.processors.NiFiJournaldProcessor
