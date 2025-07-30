@@ -123,7 +123,7 @@ jobs:
         
     - name: Build NAR package
       working-directory: ${{ steps.find_maven.outputs.maven_dir }}
-      run: mvn clean package -DskipTests
+      run: mvn clean package -e -DskipTests
       
     - name: Find NAR file
       id: find_nar
