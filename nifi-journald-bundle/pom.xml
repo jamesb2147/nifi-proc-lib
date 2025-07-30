@@ -29,6 +29,7 @@
 
     <modules>
         <module>NiFiJournaldProcessor-processors</module>
+        <module>NiFiJournaldProcessor-nar</module>
     </modules>
 
 </project>
