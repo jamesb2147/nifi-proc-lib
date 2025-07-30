@@ -17,18 +17,18 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.example</groupId>
+        <groupId>com.embaucha</groupId>
         <artifactId>nifi-journald-bundle</artifactId>
         <version>1.0.0</version>
     </parent>
 
     <artifactId>nifi-NiFiJournaldProcessor-nar</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>nar</packaging>
 
     <dependencies>
         <dependency>
-            <groupId>org.example</groupId>
+            <groupId>com.embaucha</groupId>
             <artifactId>nifi-NiFiJournaldProcessor-processors</artifactId>
             <version>1.0.0</version>
         </dependency>
